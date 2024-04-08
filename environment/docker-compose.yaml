@@ -1,0 +1,77 @@
+version: '3'
+
+services:
+    minio_server:
+        container_name: minio_server
+        image: minio/minio
+        ports:
+            - "9000:9000"
+            - "9001:9001"
+        networks:
+            mlflow_net:
+                ipv4_address: 172.20.0.10
+        volumes:
+            - minio_server_data:/data
+        environment:
+            - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
+            - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
+        command: server /data --address ':9000' --console-address ':9001'
+
+    minio_mc:
+        container_name: minio_mc
+        image: minio/mc
+        depends_on:
+            - minio_server
+        networks:
+            - mlflow_net
+        volumes:
+            - ./wait-for-it.sh:/tmp/wait-for-it.sh
+        entrypoint: >
+            /bin/sh -c "
+            /tmp/wait-for-it.sh 172.20.0.10:9000 &&
+            /usr/bin/mc alias set minio_server http://172.20.0.10:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
+            /usr/bin/mc mb minio_server/mlflow;
+            exit 0;
+            "
+
+    mlflow_db:
+        container_name: mlflow_db
+        image: mysql/mysql-server
+        ports:
+            - "3348:3306"
+        networks:
+            - mlflow_net
+        volumes:
+            - mlflow_db_data:/var/lib/mysql
+        environment:
+            - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+            - MYSQL_USER=${MYSQL_USER}
+            - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+            - MYSQL_DATABASE=${MLFLOW_DB}
+
+    mlflow_server:
+        container_name: mlflow_server
+        build: ./mlflow_server
+        image: mlflow_server
+        depends_on:
+            - minio_mc
+            - mlflow_db
+        ports:
+            - "5000:5000"
+        networks:
+            - mlflow_net
+        environment:
+            - MLFLOW_S3_ENDPOINT_URL="http://minio_server:9000"
+            - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+        command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mlflow_db:3306/${MLFLOW_DB} --default-artifact-root s3://mlflow/
+
+volumes:
+    minio_server_data: null
+    mlflow_db_data: null
+
+networks:
+    mlflow_net:
+        ipam:
+            config:
+                -   subnet: 172.20.0.0/16
