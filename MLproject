@@ -1,5 +1,7 @@
 name: some_mlproject
-conda_env: conda_env.yaml
+docker_env:
+    image: ubuntu/mlflow:2.1.1_1.0-22.04
+    volumes: [ "./train.py:/tmp/train.py" ]
 entry_points:
     main:
-        command: "python train.py"
+        command: "python3 /tmp/train.py"
